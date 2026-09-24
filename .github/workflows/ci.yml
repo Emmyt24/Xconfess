@@ -106,6 +106,8 @@ jobs:
       - run: npm install --global npm@10.9.3
       - run: npm ci --include=optional --no-audit --no-fund
       - run: npm run ci:apps
+      - name: Check OpenAPI artifact drift
+        run: bash scripts/check-openapi-drift.sh
 
   contracts:
     name: Contracts
