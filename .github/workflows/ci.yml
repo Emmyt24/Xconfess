@@ -129,3 +129,11 @@ jobs:
       - run: cargo test --workspace
       - name: Check contract ABI drift
         run: bash scripts/check-abi-drift.sh
+      - name: Store contract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-artifacts
+          path: |
+            deployments/
+            xconfess-contracts/gas-baseline.json
+          if-no-files-found: ignore
