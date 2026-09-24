@@ -11,6 +11,7 @@ import { RedisHealthIndicator } from './redis.health';
 import { SchemaReadinessHealthIndicator } from './schema-readiness.health';
 import { QueueHealthIndicator } from './queue.health';
 import { PostgresHealthIndicator } from './postgres.health';
+import { EmailHealthIndicator } from './email.health';
 
 interface SubsystemStatus {
   name: string;
@@ -33,7 +34,7 @@ function buildSubsystemSummary(
   const info = result.info ?? {};
   const errors = result.error ?? {};
 
-  const keys = ['database', 'redis', 'queues', 'schema'];
+  const keys = ['database', 'redis', 'queues', 'schema', 'email'];
   for (const key of keys) {
     const detail = info[key] ?? errors[key];
     if (!detail) {
@@ -70,6 +71,7 @@ export class HealthController {
     private readonly redis: RedisHealthIndicator,
     private readonly schemaReadiness: SchemaReadinessHealthIndicator,
     private readonly queues: QueueHealthIndicator,
+    private readonly email: EmailHealthIndicator,
     private readonly configService: ConfigService,
   ) {}
 
@@ -102,7 +104,7 @@ export class HealthController {
     summary: 'Readiness probe',
     description:
       'Checks Postgres (latency, version, connections), Redis (latency, version), ' +
-      'BullMQ queue workers, and confession-table schema. ' +
+      'BullMQ queue workers, confession-table schema, and SMTP reachability. ' +
       'Returns 503 with per-subsystem diagnostics and actionable hints on failure. ' +
       'Use for Kubernetes readiness probes.',
   })
@@ -117,6 +119,7 @@ export class HealthController {
       async () => this.redis.isHealthy('redis'),
       async () => this.queues.isHealthy('queues'),
       async () => this.schemaReadiness.isHealthy('schema'),
+      async () => this.email.isHealthy('email'),
     ]);
     const jobsEnabled =
       this.configService?.get<string>('ENABLE_BACKGROUND_JOBS') === 'true';
@@ -145,6 +148,7 @@ export class HealthController {
       async () => this.redis.isHealthy('redis'),
       async () => this.queues.isHealthy('queues'),
       async () => this.schemaReadiness.isHealthy('schema'),
+      async () => this.email.isHealthy('email'),
     ]);
     const jobsEnabled =
       this.configService?.get<string>('ENABLE_BACKGROUND_JOBS') === 'true';
@@ -153,6 +157,39 @@ export class HealthController {
       backgroundJobMode: jobsEnabled ? 'enabled' : 'disabled',
       subsystems: buildSubsystemSummary(result),
     };
+  }
+
+  /**
+   * Startup probe — are all critical dependencies reachable at boot time?
+   *
+   * Semantics differ from the readiness probe:
+   *  - Runs only during the startup window (Kubernetes `startupProbe`).
+   *  - Checks only the dependencies needed before the process accepts traffic.
+   *  - Does NOT check queue workers (they may not have started yet).
+   *  - Does NOT check email (optional dependency for startup).
+   *  - A 503 here signals that the container should be restarted, not
+   *    temporarily removed from load balancing (which is readiness).
+   *
+   * Set `failureThreshold * periodSeconds` in your Kubernetes manifest to
+   * allow enough time for cold-start database migrations.
+   */
+  @Get('startup')
+  @HealthCheck()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Startup probe',
+    description:
+      'Checks critical dependencies (Postgres, schema) required before the ' +
+      'process can serve any traffic. Intended for Kubernetes startupProbe. ' +
+      'Returns 503 if core dependencies are not yet reachable.',
+  })
+  @ApiResponse({ status: 200, description: 'Critical dependencies reachable' })
+  @ApiResponse({ status: 503, description: 'Critical dependency unavailable' })
+  async startup() {
+    return this.health.check([
+      async () => this.db.isHealthy('database'),
+      async () => this.schemaReadiness.isHealthy('schema'),
+    ]);
   }
 
   /**
@@ -189,6 +226,7 @@ export class HealthController {
       async () => this.redis.isHealthy('redis'),
       async () => this.queues.isHealthy('queues'),
       async () => this.schemaReadiness.isHealthy('schema'),
+      async () => this.email.isHealthy('email'),
     ]).catch((err) => {
       // NestJS Terminus throws an HttpException whose .response body has:
       //   { status, error: { <failed> }, details: { <all> } }
@@ -212,6 +250,7 @@ export class HealthController {
     const schemaStatus = details['schema']?.status ?? errors['schema']?.status;
     const redisStatus = details['redis']?.status ?? errors['redis']?.status;
     const queuesStatus = details['queues']?.status ?? errors['queues']?.status;
+    const emailStatus = details['email']?.status ?? errors['email']?.status;
 
     // Critical: database or schema down → 'down'
     if (dbStatus === 'down' || schemaStatus === 'down') {
@@ -253,6 +292,7 @@ export class HealthController {
         redis: { status: redisStatus ?? 'unknown', mode: details['redis']?.mode },
         queues: { status: queuesStatus ?? 'unknown', mode: details['queues']?.mode },
         schema: { status: schemaStatus ?? 'unknown' },
+        email: { status: emailStatus ?? 'unknown', mode: details['email']?.mode },
       },
     };
   }
