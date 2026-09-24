@@ -12,6 +12,8 @@
   },
   "scripts": {
     "preflight": "node scripts/check-node-version.js",
+    "diagnose": "node scripts/diagnose.js",
+    "diagnose:json": "node scripts/diagnose.js --json",
     "dev": "npm run dev:check && concurrently \"npm run dev --workspace=xconfess-backend\" \"npm run dev --workspace=xconfess-frontend\"",
     "setup:check": "node scripts/check-node-version.js",
     "env:bootstrap": "node scripts/bootstrap-env.js",
