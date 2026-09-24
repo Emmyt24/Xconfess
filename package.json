@@ -67,7 +67,11 @@
     "secret-scan": "node scripts/run-secret-scanning-preflight.js",
     "secret-scan:self-test": "node scripts/run-secret-scanning-preflight.js --self-test",
     "audit:ci": "npx audit-ci --config audit-ci.json",
-    "audit:report": "npm audit --json > audit-report.json 2>&1 || true"
+    "audit:report": "npm audit --json > audit-report.json 2>&1 || true",
+    "backup:drill": "node scripts/verify-backup-restore.js",
+    "backup:drill:dry-run": "node scripts/verify-backup-restore.js --dry-run",
+    "chaos:list": "node scripts/run-chaos-experiment.js --list",
+    "chaos:plan": "node scripts/run-chaos-experiment.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
