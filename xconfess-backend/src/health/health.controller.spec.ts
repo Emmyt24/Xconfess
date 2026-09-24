@@ -6,6 +6,7 @@ import { RedisHealthIndicator } from './redis.health';
 import { SchemaReadinessHealthIndicator } from './schema-readiness.health';
 import { QueueHealthIndicator } from './queue.health';
 import { PostgresHealthIndicator } from './postgres.health';
+import { ReplicaLagHealthIndicator } from './replica-lag.health';
 
 const UP = (key: string, extra?: Record<string, unknown>) => ({
   [key]: { status: 'up', ...extra },
@@ -43,6 +44,9 @@ describe('HealthController', () => {
   const queueIndicator = {
     isHealthy: jest.fn().mockResolvedValue(UP('queues')),
   };
+  const replicaLagIndicator = {
+    isHealthy: jest.fn().mockResolvedValue(UP('replica_lag', { lagBytes: 0, lagRating: 'ok', replicaReachable: true })),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -74,6 +78,7 @@ describe('HealthController', () => {
         { provide: SchemaReadinessHealthIndicator, useValue: schemaIndicator },
         { provide: QueueHealthIndicator, useValue: queueIndicator },
         { provide: ConfigService, useValue: configService },
+        { provide: ReplicaLagHealthIndicator, useValue: replicaLagIndicator },
       ],
     }).compile();
 

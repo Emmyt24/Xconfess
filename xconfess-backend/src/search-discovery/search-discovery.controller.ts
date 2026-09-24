@@ -18,6 +18,7 @@ import { SearchDiscoveryService } from './search-discovery.service';
 import { CreateSavedSearchDto } from './dto/create-saved-search.dto';
 import { SearchConfessionDto } from '../confession/dto/search-confession.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RequestCost, COST } from '../common/guards/cost-throttler.guard';
 
 @ApiTags('Search Discovery')
 @ApiBearerAuth()
@@ -27,6 +28,7 @@ export class SearchDiscoveryController {
   constructor(private readonly service: SearchDiscoveryService) {}
 
   @Get()
+  @RequestCost(COST.MEDIUM) // full-text search + filtering is more expensive than a simple read
   @ApiOperation({ summary: 'Execute full text search with filters and highlighting' })
   executeSearch(
     @Req() req: any,
