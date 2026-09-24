@@ -58,6 +58,8 @@
     "deploy:preflight": "npm run contracts:verify-env && node scripts/deploy-preflight.js",
     "deploy:smoke": "node scripts/deployed-smoke.js",
     "readiness": "npm run production:readiness",
+    "migration:gate": "node scripts/migration-gate.js",
+    "migration:gate:dry-run": "node scripts/migration-gate.js --dry-run",
     "readiness:test": "node --test scripts/__tests__/production-readiness.test.js",
     "production:readiness": "node scripts/production-readiness.js",
     "production:readiness:full": "node scripts/production-readiness.js --full",
