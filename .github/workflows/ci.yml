@@ -39,8 +39,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Run the scanner's self-test first: verifies the scanner itself catches
+      # the expected pattern categories before scanning the real repo.
       - run: ./scripts/secret-scanning-preflight.sh --self-test
+      # Full repository scan. Exits non-zero and prints findings if any
+      # unredacted secrets are detected (see docs/TEST_DATA_PRIVACY.md).
       - run: ./scripts/secret-scanning-preflight.sh
+
+  doc-audit:
+    # Issue #119: Verify that every `npm run <script>` reference in contributor
+    # docs points to a script that actually exists in package.json.
+    name: Docs / command audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@10.9.3
+      - run: npm ci --include=optional --no-audit --no-fund
+      - name: Audit documented commands against package.json
+        run: node scripts/doc-command-audit.js
 
   apps:
     name: Apps / lint, typecheck, build
@@ -106,6 +127,74 @@ jobs:
       - run: npm install --global npm@10.9.3
       - run: npm ci --include=optional --no-audit --no-fund
       - run: npm run ci:apps
+
+  backend-test-coverage:
+    # Issue #117: Run backend unit tests with risk-domain coverage thresholds.
+    # Thresholds are defined in xconfess-backend/jest.config.js under
+    # coverageThreshold. A coverage drop in auth, encryption, moderation,
+    # stellar, or tipping will fail this job and name the domain that regressed.
+    name: Backend / tests + coverage gates
+    needs: [audit, secret-scan]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: xconfess
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d xconfess"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      APP_ENV: ci
+      PORT: 5000
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: xconfess
+      TYPEORM_SYNCHRONIZE: true
+      TYPEORM_MIGRATIONS_RUN: false
+      JWT_SECRET: ci-jwt-secret-with-more-than-32-characters
+      APP_SECRET: ci-app-secret-with-more-than-32-characters
+      CONFESSION_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      ENABLE_BACKGROUND_JOBS: false
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      STELLAR_FEATURES_ENABLED: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@10.9.3
+      - run: npm ci --include=optional --no-audit --no-fund
+      - name: Run backend tests with risk-domain coverage thresholds
+        working-directory: xconfess-backend
+        run: |
+          npx jest \
+            --config jest.config.js \
+            --coverage \
+            --coverageReporters=text-summary \
+            --passWithNoTests \
+            --forceExit
 
   contracts:
     name: Contracts

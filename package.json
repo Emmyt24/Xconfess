@@ -11,7 +11,8 @@
     "npm": ">=9.0.0"
   },
   "scripts": {
-    "preflight": "node scripts/check-node-version.js",
+    "preflight": "node scripts/check-node-version.js && node scripts/doc-command-audit.js",
+    "bootstrap": "node scripts/bootstrap.js",
     "dev": "npm run dev:check && concurrently \"npm run dev --workspace=xconfess-backend\" \"npm run dev --workspace=xconfess-frontend\"",
     "setup:check": "node scripts/check-node-version.js",
     "env:bootstrap": "node scripts/bootstrap-env.js",
@@ -21,6 +22,7 @@
     "dev:frontend": "npm run dev --workspace=xconfess-frontend",
     "backend:build": "npm run build --workspace=xconfess-backend",
     "backend:test": "npm run test --workspace=xconfess-backend",
+    "backend:test:coverage": "npm run test:cov:risk-domains --workspace=xconfess-backend",
     "backend:test:e2e": "npm run test:e2e --workspace=xconfess-backend",
     "backend:lint": "npm run lint --workspace=xconfess-backend",
     "backend:migration:run": "npm run migration:run --workspace=xconfess-backend",
@@ -54,6 +56,8 @@
     "ci:frontend": "npm run frontend:lint && npm run frontend:typecheck && npm run frontend:test && npm run frontend:build",
     "ci:contract": "npm run contract:fmt:check && npm run contract:lint && npm run contract:test && npm run contract:build:release",
     "ci:apps": "npm run backend:build && npm run backend:lint && npm run frontend:lint && npm run frontend:typecheck && npm run frontend:build",
+    "ci:coverage": "npm run backend:test:coverage",
+    "ci:doc-audit": "node scripts/doc-command-audit.js",
     "ci": "npm run ci:backend && npm run ci:frontend && npm run ci:contract",
     "deploy:preflight": "npm run contracts:verify-env && node scripts/deploy-preflight.js",
     "deploy:smoke": "node scripts/deployed-smoke.js",
