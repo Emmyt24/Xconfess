@@ -65,6 +65,34 @@ To avoid these issues in the future:
 - **Verify the network icon** in your wallet before approving transactions
 - **Clear cache periodically** if you experience strange behavior
 
+## Identity Enumeration Resistance
+
+Registration, login, recovery, and profile endpoints must not reveal whether a given identity (username, email, or wallet address) exists. An attacker who can distinguish "identity exists" from "identity does not exist" can build a list of valid accounts and target them. Xconfess normalizes externally visible behavior across these endpoints so that existing and non-existing identities are indistinguishable to a caller.
+
+### Externally Visible Behavior
+
+For every identity-bearing endpoint, the response for an existing identity and a non-existing identity must match on all of the following:
+
+- **Status code**: The same HTTP status is returned in both cases (for example, `200` for login and recovery initiation, `202` for registration, `401` for authentication failures).
+- **Response body**: The same shape and the same generic message are returned. Messages never say "user not found", "email already registered", or "incorrect password"; they use a single neutral message such as "If an account exists, we've sent instructions."
+- **Headers**: Response headers (including `Content-Length`, `Content-Type`, and any rate-limit headers) are identical in both cases. Rate-limit headers reflect the caller's budget, not the identity's existence.
+- **Timing budget**: The endpoint performs the same work (including a dummy hash or lookup) in both cases so that response time does not leak existence. Measured latency for existing and non-existing identities must stay within a configured timing budget.
+
+### Endpoint Notes
+
+- **Registration**: Submitting an already-registered identity returns the same success response as a new registration. The user is notified out-of-band (for example, by email) that the identity is already registered, so the caller cannot tell the difference.
+- **Login**: A wrong password and an unknown identity return the same status, body, and timing. Failed attempts are counted against the caller's rate-limit budget regardless of whether the identity exists.
+- **Recovery**: Requesting recovery for an unknown identity returns the same response as for a known one. Recovery instructions are only sent when the identity exists, but the caller cannot observe that difference.
+- **Profile**: Profile lookups that are not authorized to view an identity return the same response whether or not the identity exists, so that profile endpoints cannot be used as an existence oracle.
+
+### Internal Logs
+
+Operators still need to diagnose issues, so internal logs record the outcome of each attempt (for example, `identity_exists=true|false`, `reason=unknown_identity|bad_password`) alongside the request ID. These logs are never returned to the caller and never contain raw credentials. Where an identifier must appear in a log, it is hashed or truncated so that logs remain useful without exposing raw identifiers.
+
+### Testing
+
+Enumeration tests exercise each identity-bearing endpoint with an existing identity and a non-existing identity and assert that the two responses match on status, body, headers, and timing budget. Tests cover failure paths (wrong password, unknown identity, unauthorized profile access) and assert that internal logs record the outcome without exposing raw identifiers. Timing assertions use a configured budget rather than an exact value so that they remain stable across environments.
+
 ## Login Anomaly Detection and Step-Up Challenges
 
 Xconfess continuously evaluates login attempts for signs of credential stuffing and impossible-travel patterns. When an attempt looks suspicious, the user is asked for a second factor (a step-up challenge) or the attempt is blocked, depending on the computed risk.
@@ -143,29 +171,12 @@ After confirmation, the job enters a configurable grace period. During this wind
 
 ### Anonymization Rules
 
-Records that must be retained for legal or operational reasons are de-identified rather than deleted. Anonymization replaces direct identifiers (such as wallet address, display name, and contact details) with non-reversible placeholders while preserving the record's structural integrity for analytics and audit purposes.
+Records that must be retained for legal or operational reasons are de-identified rather than deleted. Identifiers are replaced with irreversible hashes or removed entirely, and references to the account are rewritten so that no retained record can be linked back to the user. Records that are not required for legal or operational reasons are deleted outright.
 
-### Legal-Retention Exceptions
+### Idempotency and Retries
 
-Some records are subject to legal-retention requirements and cannot be deleted within the normal flow. These records are:
+Each step of the orchestration job is idempotent. If the job fails partway through, it can be retried from its last recorded state without duplicating work or leaving the account in an inconsistent state. The job records its progress so that operators can see exactly which subsystems have been processed.
 
-- Retained for the minimum period required by applicable law.
-- De-identified using the anonymization rules above.
-- Excluded from the user-facing deletion confirmation until the retention period expires.
+### User-Facing Status
 
-Retained records are always justified by a documented retention requirement and are never left in an identifiable form.
-
-### Idempotency and Observability
-
-Each transition is idempotent: re-running the job in any state produces the same result and does not duplicate work. The job emits status updates so that the user-facing status reflects the true state of the deletion at all times.
-
-### Cancelling a Deletion
-
-If you requested deletion by mistake, you can cancel it during the grace period:
-
-1. Open your account settings
-2. Locate the pending deletion notice
-3. Click **"Cancel Deletion"**
-4. Confirm the cancellation
-
-Once the job has entered `processing`, cancellation is no longer possible.
+The user can always see the current state of their deletion request. Status is derived from the orchestration state, so it is accurate even if the job is retried or delayed. If the job fails, the user is shown that the request is still in progress and that no data has been lost.
