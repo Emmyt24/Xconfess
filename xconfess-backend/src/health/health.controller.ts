@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Optional } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -11,6 +11,8 @@ import { RedisHealthIndicator } from './redis.health';
 import { SchemaReadinessHealthIndicator } from './schema-readiness.health';
 import { QueueHealthIndicator } from './queue.health';
 import { PostgresHealthIndicator } from './postgres.health';
+import { DatabasePoolObservabilityService } from '../database/database-pool-observability.service';
+
 
 interface SubsystemStatus {
   name: string;
@@ -71,7 +73,17 @@ export class HealthController {
     private readonly schemaReadiness: SchemaReadinessHealthIndicator,
     private readonly queues: QueueHealthIndicator,
     private readonly configService: ConfigService,
+    @Optional() private readonly poolObservability?: DatabasePoolObservabilityService,
   ) {}
+
+  @Get('database-pool')
+  @ApiOperation({
+    summary: 'Database connection pool and lock contention observability metrics',
+  })
+  getDatabasePoolMetrics() {
+    return this.poolObservability?.getPoolAndLockMetrics();
+  }
+
 
   /**
    * Liveness probe — is the process responsive?
