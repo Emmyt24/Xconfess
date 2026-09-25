@@ -65,6 +65,59 @@ To avoid these issues in the future:
 - **Verify the network icon** in your wallet before approving transactions
 - **Clear cache periodically** if you experience strange behavior
 
+## Login Anomaly Detection and Step-Up Challenges
+
+Xconfess continuously evaluates login attempts for signs of credential stuffing and impossible-travel patterns. When an attempt looks suspicious, the user is asked for a second factor (a step-up challenge) or the attempt is blocked, depending on the computed risk.
+
+### Anomaly Signals
+
+Each login attempt is scored using the following signals. Signals are derived from the attempt itself and from recent history; raw sensitive values are never stored.
+
+- **Credential stuffing**: Many distinct accounts are attempted from the same source in a short window, or a single account is attempted from many sources.
+- **Impossible travel**: Two successful or attempted logins for the same account originate from locations that cannot be reached in the elapsed time.
+- **Velocity**: The number of attempts for an account or source exceeds a configured threshold within a rolling window.
+- **Device novelty**: The attempt comes from a device fingerprint not previously associated with the account.
+- **IP novelty**: The attempt comes from an IP address or network not previously associated with the account.
+
+### Risk Scoring
+
+Signals are combined into a single risk score per attempt. Each signal contributes a weighted amount, and the total maps to a risk band:
+
+- **Low**: The attempt proceeds normally.
+- **Medium**: The attempt proceeds but is flagged for operator review and contributes to future scoring.
+- **High**: The attempt requires a step-up challenge (a second factor) before it can proceed.
+- **Critical**: The attempt is blocked outright and the account owner is notified.
+
+Thresholds and weights are configurable per deployment so operators can tune sensitivity without code changes.
+
+### Step-Up Behavior
+
+- **High risk**: The user must complete a second factor (for example, a one-time code or an additional wallet signature) before the session is established. If the challenge fails or expires, the attempt is treated as blocked.
+- **Critical risk**: The attempt is rejected immediately. The user is shown a clear message and, where appropriate, a recovery path.
+- **Medium risk**: The attempt succeeds, but the event is recorded for review and raises the account's baseline risk for subsequent attempts.
+
+### Correlation by Request ID
+
+Every login attempt, anomaly signal, risk decision, and step-up challenge is correlated by a single request ID. This ID is attached to all related events so that operators can trace a full attempt end to end, and so that support can reference a specific attempt without exposing sensitive data.
+
+### Privacy Limits
+
+Anomaly detection is designed to minimize the data it retains:
+
+- **Data minimization**: Only the signals needed for scoring are derived. Raw credentials, full IP addresses, and precise locations are not stored; they are hashed or truncated where a stable identifier is required.
+- **Retention**: Derived signals and risk events are retained only for the configured retention window, after which they are deleted or aggregated.
+- **No raw sensitive data leakage**: Logs and operator views never contain raw credentials, full IP addresses, or precise location data. Events reference the request ID and the derived signal values only.
+- **False-positive measurement**: Risk decisions are recorded with their outcome so that false positives can be measured and thresholds tuned over time.
+
+### If You Are Challenged or Blocked
+
+If a login is challenged or blocked, you can recover as follows:
+
+1. Complete the step-up challenge if one is presented.
+2. If the attempt was blocked, wait for the configured cooldown and try again from a network and device you normally use.
+3. If you believe the block is a false positive, contact support and reference the request ID shown in the error message.
+4. If you suspect your account is under attack, change your credentials and review connected wallets.
+
 ## Account Deletion Orchestration
 
 Account deletion is a stateful, multi-step process. It spans posts, messages, exports, notifications, analytics, and chain references, each with different retention requirements. The orchestration job tracks an explicit state so that deletion is idempotent and observable, and so that user-facing status is always accurate.

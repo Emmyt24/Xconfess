@@ -67,6 +67,49 @@ Records that must be retained for legal/regulatory reasons (e.g. financial/tip l
 
 Each step is keyed by the deletion job id, so re-running a job is a no-op for already-completed steps. State transitions and per-step outcomes are emitted as structured events, and the user-facing status endpoint reflects the current state so the UI can report accurate progress.
 
+## Login Anomaly Detection & Step-Up Challenges (Issue #26)
+
+Credential stuffing and impossible-travel patterns must be surfaced consistently to users and operators without weakening the anonymity guarantee. This section defines the signals, risk scoring, privacy limits, and step-up behavior layered on top of the cookie/JWT decision above; it does not change that decision.
+
+### Signals
+
+Each login attempt is evaluated against a small, explainable set of signals. Signals are derived per attempt and never store raw sensitive values:
+
+- **Credential stuffing** — many distinct accounts attempted from the same source fingerprint within a short window, or a high failure ratio across accounts.
+- **Impossible travel** — two successful authentications for the same account whose implied travel speed between coarse geolocations exceeds a physical threshold.
+- **Velocity** — attempts per account and per source fingerprint exceeding configured rate thresholds.
+- **Device/IP novelty** — first-seen device or network fingerprint for an otherwise established account.
+
+### Risk scoring
+
+Signals contribute weighted points to a per-attempt risk score in `[0, 100]`. Weights and thresholds are configuration-driven so operators can tune sensitivity without code changes. The score maps to a policy band:
+
+- **Low** — allow; record the attempt outcome only.
+- **Elevated** — allow but require a step-up challenge (second factor) before the session is fully trusted.
+- **High** — block the attempt and require the user to complete a step-up challenge out-of-band before retrying.
+
+Thresholds are chosen so that false positives are measurable: every band decision emits a structured event with the contributing signals and score, allowing precision/recall to be tracked over time and thresholds adjusted.
+
+### Step-up behavior
+
+When a band requires step-up, the login does not grant a fully trusted session. Instead the backend issues a short-lived, single-purpose challenge token bound to the attempt's request ID. The user completes a second factor (e.g. TOTP or a one-time code) to exchange the challenge token for a normal session. High-risk attempts are blocked outright until the challenge is satisfied. Step-up challenges expire quickly and are single-use.
+
+### Correlation by request ID
+
+Every login attempt is assigned a request ID at ingress. All anomaly signals, the computed risk score, the band decision, step-up issuance/completion, and block events are emitted as structured events carrying that request ID. This lets operators reconstruct a single attempt end-to-end and correlate it with downstream session activity.
+
+### Privacy limits
+
+Anomaly detection must not undermine anonymity:
+
+- **Data minimization** — store only derived signals and coarse, non-reversible fingerprints; never persist raw IP addresses, raw device identifiers, or raw geolocation.
+- **Retention** — anomaly and step-up events are retained for a short, configurable window sufficient for detection and audit, then purged.
+- **No leakage** — signals and scores are never exposed to other users and are surfaced to the account owner only in aggregate, non-identifying terms.
+
+### Rollback
+
+Anomaly detection and step-up are gated behind a feature flag. Disabling the flag reverts to the baseline login flow (allow/deny by credentials only) without data migration, and previously stored derived signals age out under the retention window.
+
 ## References
 
 - xconfess-backend/src/auth/jwt.strategy.ts

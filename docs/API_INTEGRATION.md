@@ -73,6 +73,101 @@ Authorization: Bearer <access_token>
 
 These return the current authenticated user profile. Use whichever route best fits your integration.
 
+## Login anomaly detection and step-up challenges
+
+Login attempts are scored for risk. High-risk attempts require a second factor
+(step-up challenge) or are blocked, depending on the configured policy. Every
+anomaly and step-up event is correlated by a `requestId` so operators can trace
+a single attempt end to end.
+
+### Anomaly signals
+
+| Signal              | Description |
+|---------------------|-------------|
+| `credential_stuffing` | Many distinct accounts attempted from the same source in a short window. |
+| `impossible_travel`   | Two successful logins from geographically distant locations within an implausible time window. |
+| `velocity`            | Login attempt rate for an account or source exceeds the configured threshold. |
+| `device_novelty`      | Login from a device fingerprint not previously seen for the account. |
+| `ip_novelty`          | Login from an IP address/ASN not previously seen for the account. |
+
+### Risk scoring
+
+Each signal contributes a weighted score; the sum is clamped to `0–100`.
+
+| Signal              | Weight |
+|---------------------|--------|
+| `credential_stuffing` | 40 |
+| `impossible_travel`   | 35 |
+| `velocity`            | 20 |
+| `device_novelty`      | 15 |
+| `ip_novelty`          | 10 |
+
+Policy thresholds:
+
+- `score < 40` — allow, no challenge.
+- `40 ≤ score < 70` — require a step-up challenge (second factor).
+- `score ≥ 70` — block the attempt.
+
+### Step-up challenge flow
+
+When a login is challenged, the login response does not return an access token.
+Instead it returns a challenge that must be completed before a token is issued.
+
+`POST /api/auth/login` (challenged) response:
+
+```json
+{
+  "status": "step_up_required",
+  "requestId": "req_5b1e9c",
+  "challengeId": "chal_2f7a",
+  "riskScore": 55,
+  "signals": ["device_novelty", "ip_novelty"],
+  "expiresAt": "2026-04-25T10:05:00.000Z"
+}
+```
+
+Complete the challenge:
+
+`POST /api/auth/login/step-up`
+
+```json
+{
+  "challengeId": "chal_2f7a",
+  "code": "123456"
+}
+```
+
+On success the normal login response (with `access_token`) is returned. On
+failure the challenge can be retried until `expiresAt`, after which a new login
+attempt is required.
+
+Blocked attempts return `403 Forbidden`:
+
+```json
+{
+  "status": "blocked",
+  "requestId": "req_5b1e9c",
+  "riskScore": 80,
+  "signals": ["credential_stuffing", "velocity"]
+}
+```
+
+### Correlation by request ID
+
+Every login attempt is assigned a `requestId`. The same `requestId` is echoed on
+the login response, the step-up challenge, and any anomaly/step-up event emitted
+to operators, so a single attempt can be reconstructed across systems. Clients
+should log the `requestId` from responses for support and debugging.
+
+### Privacy limits
+
+Anomaly detection follows data minimization:
+
+- Only derived signals and scores are stored; raw credentials are never retained.
+- IP addresses and device fingerprints are stored as salted hashes, not raw values.
+- Signal history is retained for a bounded window (default 30 days) and then purged.
+- Operators see signal names and scores, not raw sensitive identifiers.
+
 ## Account deletion orchestration
 
 Account deletion is a stateful, idempotent job. Deletion spans posts, messages,
@@ -311,93 +406,3 @@ Request body:
 ### Tipping
 
 - `GET /api/confessions/:id/tips` — list tips for a confession
-- `GET /api/confessions/:id/tips/stats` — tip aggregate stats
-- `POST /api/confessions/:id/tips/verify` — verify an XLM tip transaction
-
-`POST /api/confessions/:id/tips/verify` body:
-
-```json
-{
-  "txId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-}
-```
-
-#### Response states
-
-Every response carries a typed `state` field. Consumers should switch on
-`state` rather than parsing the `message` text, since message wording may
-change across releases. `verified` and `duplicate` are success outcomes
-(2xx); everything else is a typed error.
-
-| `state`     | HTTP status | Meaning | `canRetry` |
-|-------------|-------------|---------|------------|
-| `verified`  | 201 | This request performed first-writer settlement. | — |
-| `duplicate` | 201 | A prior request already settled this exact `(confessionId, txId)` pair. This is a safe, canonical replay — not an error. | — |
-| `pending`   | 409 | Another request is actively settling this pair right now. | `true` |
-| `stale`     | 409 | Verification exceeded the SLA threshold and is under reconciliation review. This is not a terminal failure. | `true` |
-| `conflict`  | 409 | The transaction ID is already bound to a *different* confession, or reconciliation flagged a genuine conflict. | `false` |
-| `failed`    | 400 | Verification failed terminally (invalid amount, transaction not found or invalid on-chain) — or a transient/retryable error such as a Horizon network failure. | `true` for transient errors, `false` for terminal ones |
-
-Malformed transaction IDs (not a 64-character hex string) are rejected by
-request validation before reaching this logic, returning a standard
-`400 Bad Request` with a `message` array — they do not carry a `state`
-field, since they never reach the verification pipeline.
-
-Success response body (`verified` or `duplicate`):
-
-```json
-{
-  "state": "verified",
-  "success": true,
-  "isNew": true,
-  "isIdempotent": false,
-  "tip": {
-    "id": "tip-abc-123",
-    "confessionId": "4f8f8eb0-b6d8-4a92-8f77-6fa3c7aa2e67",
-    "amount": 100,
-    "txId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "senderAddress": null,
-    "status": "verified",
-    "verifiedAt": "2026-04-25T10:00:00.000Z",
-    "createdAt": "2026-04-25T10:00:00.000Z"
-  }
-}
-```
-
-The `tip` object in this response is intentionally a reduced, public-safe
-view. Internal-only fields (`idempotencyKey`, `processingLock`, `lockedAt`,
-`lockedBy`, `retryCount`, `lastChainStatus`, `lastCheckedAt`,
-`reconciliationMetadata`) are never included on the wire.
-
-Typed error response body (`pending` / `stale` / `conflict` / `failed`):
-
-```json
-{
-  "message": "Transaction aaaa...aaaa verification has exceeded the expected processing time and is under review. It has not failed — check back shortly or contact support with this reference.",
-  "state": "stale",
-  "conflictReason": "ALREADY_PROCESSING",
-  "canRetry": true
-}
-```
-
-### Health checks
-
-- `GET /api/health/live`
-- `GET /api/health/ready`
-
-These endpoints are useful for monitoring and verifying backend availability.
-
-## Rate limiting
-
-xConfess enforces request throttling both globally and on sensitive endpoints.
-
-### Default API rate limits
-
-- `GET` requests: 50 requests per 60 seconds per client IP
-- `POST`, `PUT`, `PATCH`, `DELETE` requests: 5 requests per 60 seconds per client IP
-
-### Route-specific limits
-
-- `POST /api/auth/login` and `POST /api/users/login`: 5 requests / 60 second
-
-/* … truncated 6303 chars — edit only what you need near the top … */
