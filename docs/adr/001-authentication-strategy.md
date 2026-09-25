@@ -34,6 +34,39 @@ NextAuth (Option A) requires Next.js API routes as the auth server, which would 
 - Cross-origin requests require CORS credentials config and matching SameSite cookie policy
 - No built-in OAuth provider support — social login would require additional work
 
+## Account Deletion Orchestration (Issue #25)
+
+Account deletion is a stateful, multi-system operation that must remain idempotent and observable while honoring legal-retention exceptions. This section records the orchestration contract that the deletion job implements; it does not change the authentication decision above.
+
+### State machine
+
+A deletion request moves through explicit states with guarded transitions:
+
+- `requested` — user initiated deletion; no data has been touched yet.
+- `confirmed` — user re-authenticated and explicitly confirmed; the grace period starts.
+- `grace_period` — configurable window during which the user may cancel and return to `requested` (or `cancelled`).
+- `processing` — grace period elapsed; anonymization and retention handling run.
+- `completed` — all deletable records removed and retained records de-identified.
+- `failed` — a step errored; the job is retryable and resumes from the last committed step.
+
+Transitions are only allowed forward (plus `grace_period -> cancelled`); any other transition is rejected so replays cannot resurrect a completed deletion.
+
+### Confirmation
+
+Deletion never proceeds from `requested` without an explicit confirmation step. Confirmation requires a fresh authenticated session (re-auth) so a stolen cookie alone cannot trigger irreversible deletion.
+
+### Grace period
+
+The grace period is configurable (env-driven) and cancellable. Cancelling during `grace_period` returns the account to normal operation and records the cancellation for observability. Once `processing` begins, cancellation is no longer offered.
+
+### Anonymization and legal retention
+
+Records that must be retained for legal/regulatory reasons (e.g. financial/tip ledgers, abuse reports) are kept but de-identified: direct identifiers are replaced with a stable pseudonym, and free-text fields that could re-identify the user are scrubbed. Every retained record carries a justification tag so audits can distinguish retention from deletion. All other records (posts, messages, exports, notifications, analytics) are deleted.
+
+### Idempotency and observability
+
+Each step is keyed by the deletion job id, so re-running a job is a no-op for already-completed steps. State transitions and per-step outcomes are emitted as structured events, and the user-facing status endpoint reflects the current state so the UI can report accurate progress.
+
 ## References
 
 - xconfess-backend/src/auth/jwt.strategy.ts

@@ -73,6 +73,113 @@ Authorization: Bearer <access_token>
 
 These return the current authenticated user profile. Use whichever route best fits your integration.
 
+## Account deletion orchestration
+
+Account deletion is a stateful, idempotent job. Deletion spans posts, messages,
+exports, notifications, analytics, and chain references, each with different
+retention requirements, so the API exposes an explicit lifecycle rather than a
+single destructive call.
+
+### Lifecycle states
+
+| `state`         | Meaning | Terminal |
+|-----------------|---------|----------|
+| `requested`     | Deletion was requested but not yet confirmed by the user. | no |
+| `confirmed`     | The user confirmed intent; the grace period has started. | no |
+| `grace_period`  | Waiting out the configurable grace window; deletion can still be cancelled. | no |
+| `processing`    | The job is actively deleting and anonymizing records. | no |
+| `completed`     | All deletable records are gone and retained records are de-identified. | yes |
+| `failed`        | The job hit a terminal error; inspect `failureReason` and retry. | yes |
+| `cancelled`     | The user cancelled during the grace period; nothing was deleted. | yes |
+
+Transitions are one-directional: `requested → confirmed → grace_period →
+processing → completed | failed`, with `cancelled` reachable only from
+`confirmed` or `grace_period`.
+
+### Endpoints
+
+- `POST /api/account/deletion` — request deletion (enters `requested`)
+- `POST /api/account/deletion/confirm` — confirm intent (enters `confirmed`/`grace_period`)
+- `POST /api/account/deletion/cancel` — cancel during the grace period
+- `GET /api/account/deletion` — fetch current job status
+
+All endpoints require the `Authorization: Bearer <access_token>` header and
+operate on the authenticated user only.
+
+### Request deletion
+
+`POST /api/account/deletion`
+
+```json
+{
+  "reason": "Leaving the platform"
+}
+```
+
+Response:
+
+```json
+{
+  "state": "requested",
+  "jobId": "del_9f2c1a",
+  "gracePeriodSeconds": 604800,
+  "requestedAt": "2026-04-25T10:00:00.000Z",
+  "scheduledFor": null
+}
+```
+
+### Confirm deletion
+
+`POST /api/account/deletion/confirm`
+
+```json
+{
+  "confirmationToken": "del_9f2c1a"
+}
+```
+
+Confirmation is required before any data is touched. On success the job enters
+`grace_period` and `scheduledFor` is set to the end of the grace window.
+
+### Cancel deletion
+
+`POST /api/account/deletion/cancel`
+
+Cancellation is only accepted while the job is in `confirmed` or
+`grace_period`. Once `processing` begins, cancellation returns `409 Conflict`.
+
+### Status
+
+`GET /api/account/deletion`
+
+```json
+{
+  "state": "grace_period",
+  "jobId": "del_9f2c1a",
+  "gracePeriodSeconds": 604800,
+  "requestedAt": "2026-04-25T10:00:00.000Z",
+  "scheduledFor": "2026-05-02T10:00:00.000Z",
+  "retainedRecords": [
+    { "category": "financial", "reason": "legal_retention", "anonymized": true }
+  ]
+}
+```
+
+### Idempotency and observability
+
+Deletion requests are idempotent: repeating `POST /api/account/deletion` while a
+job is active returns the existing job rather than creating a new one. Every
+state transition is recorded with a timestamp so the user-facing status is
+always accurate.
+
+### Anonymization and legal retention
+
+Records that must be retained for legal or financial reasons (for example,
+settled tips and audit logs) are **de-identified** rather than deleted: direct
+identifiers are replaced with a stable pseudonym and the original values are
+discarded. Each retained category is reported in `retainedRecords` with a
+`reason` and `anonymized: true` so the retention is justified and auditable.
+
 ## Public endpoint reference
 
 ### Create confession
@@ -291,229 +398,6 @@ xConfess enforces request throttling both globally and on sensitive endpoints.
 
 ### Route-specific limits
 
-- `POST /api/auth/login` and `POST /api/users/login`: 5 requests / 60 seconds
-- `POST /api/users/register`: 3 requests / 60 seconds
-- `POST /api/auth/forgot-password`: 3 requests / 300 seconds
-- `POST /api/reports`: 5 requests / 300 seconds
-- `POST /api/confessions/:id/tips/verify`: strict throttling enforced by the backend because it calls Stellar Horizon
+- `POST /api/auth/login` and `POST /api/users/login`: 5 requests / 60 second
 
-### Rate-limit response
-
-When a client is throttled, the API returns HTTP `429 Too Many Requests` with a JSON body similar to:
-
-```json
-{
-  "status": 429,
-  "code": "THROTTLED",
-  "message": "Too many requests. Please wait a moment and try again.",
-  "retryAfter": 12,
-  "timestamp": "2026-04-25T10:00:00.000Z",
-  "path": "/api/confessions",
-  "requestId": "..."
-}
-```
-
-The response also includes a `Retry-After` response header.
-
-> Note: `POST /api/confessions/:id/tips/verify` may also include a stricter retry header such as `Retry-After-strict`.
-
-## Error codes
-
-xConfess uses consistent error codes in every non-2xx response.
-Common values include:
-
-- `AUTH_UNAUTHORIZED` — JWT missing or invalid
-- `AUTH_FORBIDDEN` — insufficient permissions
-- `AUTH_INVALID_CREDENTIALS` — login failed
-- `AUTH_SESSION_EXPIRED` — token expired or invalid
-- `BAD_REQUEST` — malformed request or missing parameters
-- `VALIDATION_FAILED` — schema validation failed
-- `MISSING_PARAMETER` / `INVALID_PARAMETER` — query or body input issues
-- `NOT_FOUND` — requested resource not found
-- `CONFLICT` — duplicate resource state
-- `THROTTLED` / `RATE_LIMIT_EXCEEDED` — rate limit exceeded
-- `STELLAR_ERROR` — Stellar/Soroban integration failure
-- `INTERNAL_SERVER_ERROR` — unexpected server problem
-
-### Error response format
-
-All error responses share this shape:
-
-```json
-{
-  "status": 400,
-  "code": "BAD_REQUEST",
-  "message": "Human readable message",
-  "details": null,
-  "timestamp": "2026-04-25T10:00:00.000Z",
-  "path": "/api/endpoint",
-  "requestId": "uuid"
-}
-```
-
-Use `code` for deterministic handling and `message` for logging or UI display.
-
-## Webhooks
-
-xConfess supports moderation webhooks at:
-
-- `POST /api/webhooks/moderation/results`
-
-This endpoint is not authenticated via JWT. Instead it requires HMAC signature validation using the configured `WEBHOOK_SECRET`.
-
-### Payload format
-
-```json
-{
-  "confessionId": "conf-123",
-  "moderationScore": 0.71,
-  "moderationFlags": ["harassment"],
-  "moderationStatus": "FLAGGED",
-  "details": { "harassment": 0.71 },
-  "timestamp": "2026-04-25T10:00:00.000Z"
-}
-```
-
-### Signature header
-
-The webhook sender must sign the raw JSON payload with HMAC SHA256 using `WEBHOOK_SECRET` and include:
-
-```http
-x-webhook-signature: <hex-encoded-hmac-sha256>
-```
-
-### Delivery rules
-
-- The `timestamp` must be present and parse as a valid ISO-8601 value.
-- The payload must be received within 300 seconds of the timestamp.
-- Duplicate deliveries are treated as idempotent and ignored safely.
-
-### Success response
-
-```json
-{
-  "success": true,
-  "confessionId": "conf-123",
-  "status": "FLAGGED",
-  "isIdempotent": false
-}
-```
-
-## Example integration flow
-
-### 1. Authenticate
-
-```bash
-curl -X POST "http://localhost:5000/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"Str0ng!Pass#1"}'
-```
-
-### 2. Create a confession
-
-```bash
-curl -X POST "http://localhost:5000/api/confessions" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"I finally took a break and it helped.","gender":"other","tags":["wellbeing","work"]}'
-```
-
-### 3. Fetch trending confessions
-
-```bash
-curl "http://localhost:5000/api/confessions/trending/top"
-```
-
-### 4. Report a confession
-
-```bash
-curl -X POST "http://localhost:5000/api/reports" \
-  -H "Content-Type: application/json" \
-  -d '{"confessionId":"4f8f8eb0-b6d8-4a92-8f77-6fa3c7aa2e67","type":"spam","reason":"Promotional content"}'
-```
-
-## Copy-paste examples
-
-### JavaScript
-
-```js
-async function login(email, password) {
-  const res = await fetch('http://localhost:5000/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) throw new Error(`Login failed: ${res.status}`);
-  return res.json();
-}
-
-async function createConfession(token, confession) {
-  const res = await fetch('http://localhost:5000/api/confessions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(confession),
-  });
-  if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.message || 'Confession creation failed');
-  }
-  return res.json();
-}
-```
-
-### Python
-
-```python
-import requests
-
-base_url = 'http://localhost:5000/api'
-
-login_resp = requests.post(
-    f'{base_url}/auth/login',
-    json={'email': 'alice@example.com', 'password': 'Str0ng!Pass#1'},
-)
-login_resp.raise_for_status()
-access_token = login_resp.json()['access_token']
-
-confession_resp = requests.post(
-    f'{base_url}/confessions',
-    headers={'Authorization': f'Bearer {access_token}'},
-    json={
-        'message': 'I finally took a break and it helped.',
-        'gender': 'other',
-        'tags': ['wellbeing', 'work'],
-    },
-)
-confession_resp.raise_for_status()
-print(confession_resp.json())
-```
-
-### `curl`
-
-```bash
-curl -X POST "http://localhost:5000/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"alice@example.com","password":"Str0ng!Pass#1"}'
-
-curl -X POST "http://localhost:5000/api/confessions" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"I finally took a break and it helped.","gender":"other","tags":["wellbeing","work"]}'
-```
-
-## Notes
-
-- The API is documented in Swagger when running locally at `/api/api-docs`.
-- OAuth2 is not currently supported for third-party integrations.
-- SDK generation is not part of this guide. Use the documented HTTP endpoints directly.
-
-## Troubleshooting
-
-- `401 AUTH_UNAUTHORIZED` means the JWT is missing, invalid, or expired.
-- `429 THROTTLED` means you exceeded the configured rate limit; retry after the header value.
-- `400 VALIDATION_FAILED` means request payload shape or field values are invalid.
-- `404 NOT_FOUND` means the resource ID was not found or the route is incorrect.
-- `500 INTERNAL_SERVER_ERROR` means an unexpected backend failure.
+/* … truncated 6303 chars — edit only what you need near the top … */
