@@ -108,6 +108,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Run migration gate before building (issue #129).
+      # Unsafe or malformed migrations block artifact creation.
+      - name: Migration gate
+        run: node scripts/migration-gate.js
+
       - name: Build backend
         run: npm run build --workspace=xconfess-backend
 
@@ -198,6 +203,14 @@ jobs:
             cd ~/xconfess/backend
             cp .env.deploy .env
             npm ci --omit=dev
+            # Run database migrations before starting the new app version (issue #129).
+            # This ensures the schema is updated before any new code that depends on it
+            # starts serving traffic (expand phase of expand/contract).
+            echo "Running database migrations..."
+            npm run migration:run 2>&1 || {
+              echo "::error::Database migrations failed. Aborting deploy to prevent schema/code mismatch."
+              exit 1
+            }
             if command -v pm2 &>/dev/null; then
               pm2 reload xconfess-backend --update-env || pm2 start dist/main.js --name xconfess-backend
             else

@@ -42,9 +42,27 @@ jobs:
       - run: ./scripts/secret-scanning-preflight.sh --self-test
       - run: ./scripts/secret-scanning-preflight.sh
 
+  # ── Migration gate (issue #129) ──────────────────────────────────────────
+  # Validates migration ordering, up/down method presence, and flags
+  # destructive DDL that has not been explicitly acknowledged.
+  migration-gate:
+    name: Security / Migration gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@10.9.3
+      - run: npm ci --include=optional --no-audit --no-fund
+      - name: Run migration gate
+        run: node scripts/migration-gate.js
+
   apps:
     name: Apps / lint, typecheck, build
-    needs: [audit, secret-scan]
+    needs: [audit, secret-scan, migration-gate]
     runs-on: ubuntu-latest
     services:
       postgres:
