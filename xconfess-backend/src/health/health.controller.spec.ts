@@ -60,6 +60,9 @@ describe('HealthController', () => {
     );
     schemaIndicator.isHealthy.mockResolvedValue(UP('schema'));
     queueIndicator.isHealthy.mockResolvedValue(UP('queues'));
+    emailIndicator.isHealthy.mockResolvedValue(
+      UP('email', { host: 'smtp.example.com', port: 587, latencyMs: 10 }),
+    );
     healthService.check.mockImplementation((checks: Array<() => Promise<unknown>>) =>
       Promise.all(checks.map((fn) => fn())).then((results) => ({
         status: 'ok',
@@ -77,6 +80,7 @@ describe('HealthController', () => {
         { provide: RedisHealthIndicator, useValue: redisIndicator },
         { provide: SchemaReadinessHealthIndicator, useValue: schemaIndicator },
         { provide: QueueHealthIndicator, useValue: queueIndicator },
+        { provide: EmailHealthIndicator, useValue: emailIndicator },
         { provide: ConfigService, useValue: configService },
         { provide: ReplicaLagHealthIndicator, useValue: replicaLagIndicator },
       ],
@@ -184,7 +188,7 @@ describe('HealthController', () => {
 
     it('includes subsystems summary in check response', async () => {
       const result = await controller.check();
-      expect(result.subsystems).toHaveLength(4);
+      expect(result.subsystems).toHaveLength(5);
     });
   });
 
