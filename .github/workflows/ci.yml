@@ -46,10 +46,11 @@ jobs:
       # unredacted secrets are detected (see docs/TEST_DATA_PRIVACY.md).
       - run: ./scripts/secret-scanning-preflight.sh
 
-  doc-audit:
-    # Issue #119: Verify that every `npm run <script>` reference in contributor
-    # docs points to a script that actually exists in package.json.
-    name: Docs / command audit
+  # ── Migration gate (issue #129) ──────────────────────────────────────────
+  # Validates migration ordering, up/down method presence, and flags
+  # destructive DDL that has not been explicitly acknowledged.
+  migration-gate:
+    name: Security / Migration gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +61,12 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm install --global npm@10.9.3
       - run: npm ci --include=optional --no-audit --no-fund
-      - name: Audit documented commands against package.json
-        run: node scripts/doc-command-audit.js
+      - name: Run migration gate
+        run: node scripts/migration-gate.js
 
   apps:
     name: Apps / lint, typecheck, build
-    needs: [audit, secret-scan]
+    needs: [audit, secret-scan, migration-gate]
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -127,6 +128,8 @@ jobs:
       - run: npm install --global npm@10.9.3
       - run: npm ci --include=optional --no-audit --no-fund
       - run: npm run ci:apps
+      - name: Check OpenAPI artifact drift
+        run: bash scripts/check-openapi-drift.sh
 
   backend-test-coverage:
     # Issue #117: Run backend unit tests with risk-domain coverage thresholds.
@@ -218,3 +221,11 @@ jobs:
       - run: cargo test --workspace
       - name: Check contract ABI drift
         run: bash scripts/check-abi-drift.sh
+      - name: Store contract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-artifacts
+          path: |
+            deployments/
+            xconfess-contracts/gas-baseline.json
+          if-no-files-found: ignore

@@ -41,6 +41,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
 // The legacy @nestjs/bull import has been removed. All queues use BullMQ.
 import { BullModule } from '@nestjs/bullmq';
 import { StructuredLoggingInterceptor } from './common/logging/structured-logging.interceptor';
+import { PerformanceInterceptor } from './common/interceptors/performance.interceptor';
+import { HttpCacheInterceptor } from './common/interceptors/http-cache.interceptor';
 
 @Module({
   imports: [
@@ -161,6 +163,16 @@ import { StructuredLoggingInterceptor } from './common/logging/structured-loggin
     {
       provide: APP_INTERCEPTOR,
       useClass: StructuredLoggingInterceptor,
+    },
+    // Issue #101: latency budget enforcement and p50/p95/p99 tracking.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: PerformanceInterceptor,
+    },
+    // Issue #103: HTTP cache headers, ETags, and 304 conditional responses.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpCacheInterceptor,
     },
   ],
 })
