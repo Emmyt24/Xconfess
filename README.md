@@ -370,5 +370,5 @@ When adding a new API endpoint, follow the [API endpoint contributor checklist](
 
 ## Handsoff notes
 
-<!-- handsoff-issue-42 -->
-- #42: [Advanced] Add accessible validation to authentication and recovery flows
+<!-- handsoff-issue-24 -->
+- #24: [Advanced] Add device and session management UI
