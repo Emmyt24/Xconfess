@@ -59,6 +59,8 @@
     "deploy:smoke": "node scripts/deployed-smoke.js",
     "readiness": "npm run production:readiness",
     "readiness:test": "node --test scripts/__tests__/production-readiness.test.js",
+    "benchmark:triage": "node scripts/benchmark-triage.js",
+    "benchmark:triage:test": "node --test scripts/__tests__/benchmark-triage.test.js",
     "production:readiness": "node scripts/production-readiness.js",
     "production:readiness:full": "node scripts/production-readiness.js --full",
     "production:readiness:deployed": "node scripts/production-readiness.js --production --smoke",
