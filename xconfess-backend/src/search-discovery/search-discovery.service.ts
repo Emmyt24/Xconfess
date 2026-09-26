@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -6,6 +6,7 @@ import { SavedSearch } from './entities/saved-search.entity';
 import { SearchHistory } from './entities/search-history.entity';
 import { CreateSavedSearchDto } from './dto/create-saved-search.dto';
 import { SearchConfessionDto } from '../confession/dto/search-confession.dto';
+import { SearchAbuseGuard } from './search-abuse.guard';
 
 interface ExtendedSearchDto extends SearchConfessionDto {
   dateFrom?: string;
@@ -20,6 +21,7 @@ export class SearchDiscoveryService {
     private savedSearchRepo: Repository<SavedSearch>,
     @InjectRepository(SearchHistory)
     private searchHistoryRepo: Repository<SearchHistory>,
+    private readonly searchAbuseGuard: SearchAbuseGuard,
   ) {}
 
   private normalizeFilters(dto: ExtendedSearchDto): any {
@@ -41,12 +43,34 @@ export class SearchDiscoveryService {
   // EXECUTE FULL TEXT SEARCH WITH FILTERS & HISTORY LOGGING
   // =========================================================
   async executeFullTextSearch(userId: number, dto: ExtendedSearchDto) {
-    // Automatically log the entry to history if a text keyword query is passed
-    if (dto.q && dto.q.trim()) {
-      await this.recordSearch(userId, dto);
+    const q = dto.q?.trim() || '';
+
+    // ── Abuse / cost-budget check (#84) ───────────────────────────────────────
+    // Assess before any DB work. Violations are logged without raw query text.
+    if (q) {
+      const assessment = this.searchAbuseGuard.assess(
+        q,
+        dto.page ?? 1,
+        dto.limit ?? 40,
+      );
+      if (!assessment.allowed) {
+        throw new BadRequestException({
+          statusCode: 400,
+          error: 'Search query rejected',
+          // Surface the first human-readable message; others are in violations[].
+          message: assessment.violations[0]?.message ?? 'Query exceeds allowed complexity.',
+          violations: assessment.violations.map((v) => ({
+            code: v.code,
+            message: v.message,
+          })),
+        });
+      }
     }
 
-    const q = dto.q?.trim() || '';
+    // Automatically log the entry to history if a text keyword query is passed
+    if (q) {
+      await this.recordSearch(userId, dto);
+    }
     const manager = this.searchHistoryRepo.manager;
     const conditions: string[] = ['is_deleted = false'];
     const parameters: any[] = [];
