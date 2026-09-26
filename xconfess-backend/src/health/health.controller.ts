@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Optional } from '@nestjs/common';
 import {
   HealthCheck,
   HealthCheckService,
@@ -75,6 +75,15 @@ export class HealthController {
     private readonly configService: ConfigService,
     private readonly replicaLag: ReplicaLagHealthIndicator,
   ) {}
+
+  @Get('database-pool')
+  @ApiOperation({
+    summary: 'Database connection pool and lock contention observability metrics',
+  })
+  getDatabasePoolMetrics() {
+    return this.poolObservability?.getPoolAndLockMetrics();
+  }
+
 
   /**
    * Liveness probe — is the process responsive?
