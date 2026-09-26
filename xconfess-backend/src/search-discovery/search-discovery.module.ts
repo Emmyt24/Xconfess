@@ -13,3 +13,4 @@ import { SearchAbuseGuard } from './search-abuse.guard';
   exports: [SearchDiscoveryService, SearchAbuseGuard],
 })
 export class SearchDiscoveryModule {}
+

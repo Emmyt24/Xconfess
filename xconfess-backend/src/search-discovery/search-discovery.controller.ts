@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Delete,
   Body,
   Param,
@@ -9,6 +10,7 @@ import {
   Req,
   Query,
 } from '@nestjs/common';
+
 import {
   ApiTags,
   ApiOperation,
@@ -59,5 +61,23 @@ export class SearchDiscoveryController {
   @ApiOperation({ summary: 'Get recent search history' })
   getHistory(@Req() req: any) {
     return this.service.getRecentSearches(req.user.id);
+  }
+
+  @Get('recommendations')
+  @ApiOperation({ summary: 'Get personalized recommendations with safeguards and explanations' })
+  getRecommendations(@Req() req: any, @Query('limit') limit?: number) {
+    return this.service.getPersonalizedRecommendations(req.user.id, limit);
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get user discovery personalization and diversity preferences' })
+  getPreferences(@Req() req: any) {
+    return this.service.getUserDiscoveryPreference(req.user.id);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Update personalization opt-out and diversity preferences' })
+  updatePreferences(@Req() req: any, @Body() dto: any) {
+    return this.service.updateUserDiscoveryPreference(req.user.id, dto);
   }
 }
