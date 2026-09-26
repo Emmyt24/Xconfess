@@ -15,6 +15,10 @@ import { JwtService } from '@nestjs/jwt';
 import { WsJwtGuard } from '../../auth/guards/ws-jwt.guard';
 import { NotificationService } from '../services/notification.service';
 import { WebSocketLogger } from '../../websocket/websocket.logger';
+import {
+  assertPayloadSize,
+  enforceSocketCap,
+} from '../../websocket/ws-memory-guard';
 
 /** Channel prefix for per-user private rooms */
 const USER_ROOM_PREFIX = 'user:';
@@ -118,6 +122,10 @@ export class NotificationGateway
     if (sockets) {
       sockets.add(client.id);
     }
+
+    // Enforce per-user connection cap to prevent unbounded heap growth
+    // from abandoned browser tabs (issue #102).
+    enforceSocketCap(userId, client.id, this.userSockets, this.server as any);
 
     this.logger.log(`Client connected: ${client.id} (User: ${userId})`);
 
@@ -257,6 +265,9 @@ export class NotificationGateway
   @SubscribeMessage('mark-read')
   async handleMarkRead(client: Socket, payload: { notificationId: string }) {
     const userId = client.data.userId;
+
+    // Guard oversized payloads before any application logic runs (issue #102).
+    if (!assertPayloadSize(client, 'mark-read', payload)) return;
 
     try {
       await this.notificationService.markAsRead(payload.notificationId, userId);
