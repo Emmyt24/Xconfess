@@ -30,5 +30,6 @@ const MONITORED_QUEUES = [
     QueueHealthIndicator,
     ReplicaLagHealthIndicator, // Issue #107: observable read replica lag
   ],
+  exports: [CircuitBreakerService],
 })
 export class HealthModule {}
