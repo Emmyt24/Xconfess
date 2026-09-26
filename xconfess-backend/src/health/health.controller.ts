@@ -11,7 +11,7 @@ import { RedisHealthIndicator } from './redis.health';
 import { SchemaReadinessHealthIndicator } from './schema-readiness.health';
 import { QueueHealthIndicator } from './queue.health';
 import { PostgresHealthIndicator } from './postgres.health';
-import { EmailHealthIndicator } from './email.health';
+import { ReplicaLagHealthIndicator } from './replica-lag.health';
 
 interface SubsystemStatus {
   name: string;
@@ -73,6 +73,7 @@ export class HealthController {
     private readonly queues: QueueHealthIndicator,
     private readonly email: EmailHealthIndicator,
     private readonly configService: ConfigService,
+    private readonly replicaLag: ReplicaLagHealthIndicator,
   ) {}
 
   /**
@@ -119,7 +120,8 @@ export class HealthController {
       async () => this.redis.isHealthy('redis'),
       async () => this.queues.isHealthy('queues'),
       async () => this.schemaReadiness.isHealthy('schema'),
-      async () => this.email.isHealthy('email'),
+      // Issue #107: replica lag is observable via readiness probe
+      async () => this.replicaLag.isHealthy('replica_lag'),
     ]);
     const jobsEnabled =
       this.configService?.get<string>('ENABLE_BACKGROUND_JOBS') === 'true';
@@ -148,7 +150,7 @@ export class HealthController {
       async () => this.redis.isHealthy('redis'),
       async () => this.queues.isHealthy('queues'),
       async () => this.schemaReadiness.isHealthy('schema'),
-      async () => this.email.isHealthy('email'),
+      async () => this.replicaLag.isHealthy('replica_lag'),
     ]);
     const jobsEnabled =
       this.configService?.get<string>('ENABLE_BACKGROUND_JOBS') === 'true';
